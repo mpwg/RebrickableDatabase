@@ -1,19 +1,19 @@
 Import CSVs to SQLite
 ======================
 
-This small script imports every CSV file from the `csv/` directory into a SQLite database called `Brix.db` by default.
+This small script imports every CSV file from the `csv/` directory into a SQLite database called `Brix.sqlite` by default.
 
 Usage
 
 Run from the repository root:
 
 ```bash
-python3 scripts/import_csvs_to_sqlite.py --db Brix.db --csv-dir csv
+python3 scripts/import_csvs_to_sqlite.py --db Brix.sqlite --csv-dir csv
 ```
 
 Options
 
-- `--db`: path to SQLite DB file (default: Brix.db)
+- `--db`: path to SQLite DB file (default: Brix.sqlite)
 - `--csv-dir`: directory containing CSV files (default: csv)
 - `--drop`: drop tables before importing
 

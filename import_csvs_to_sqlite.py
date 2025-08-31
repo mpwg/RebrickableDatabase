@@ -5,7 +5,7 @@ Creates (or replaces) tables named after each CSV file (filename without .csv).
 All columns are created as TEXT to keep the import simple and robust.
 
 Usage:
-    python3 scripts/import_csvs_to_sqlite.py --db Brix.db --csv-dir csv
+    python3 scripts/import_csvs_to_sqlite.py --db Brix.sqlite --csv-dir csv
 """
 import argparse
 import csv
@@ -258,7 +258,7 @@ def import_csv_to_table(conn: sqlite3.Connection, csv_path: str, table_name: str
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Import CSV files into SQLite database')
-    parser.add_argument('--db', default='Brix.db', help='SQLite database file to create/use')
+    parser.add_argument('--db', default='Brix.sqlite', help='SQLite database file to create/use')
     parser.add_argument('--csv-dir', default='csv', help='Directory containing CSV files')
     parser.add_argument('--drop', action='store_true', help='Drop existing tables before import')
     parser.add_argument('--detect-pk', action='store_true', help='Try to detect a primary key column')
