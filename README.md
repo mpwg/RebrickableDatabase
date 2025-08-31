@@ -3,6 +3,11 @@ Import CSVs into SQLite
 
 This repository includes a small script, `import_csvs_to_sqlite.py`, which imports all CSV files from a directory (default `csv/`) into a SQLite database (default `Brix.sqlite`). Each CSV becomes a table named after the file (filename without `.csv`, sanitized to a valid SQLite identifier).
 
+Source of CSV files
+-------------------
+
+The CSV files included in the `csv/` folder were downloaded from [Rebrickable's downloads page](https://rebrickable.com/downloads/). Rebrickable is a community-maintained database of LEGO sets, parts, minifigures, and inventories — a helpful resource for builders, collectors, and developers. Thanks to Rebrickable for making the data available.
+
 Quick usage
 -----------
 
