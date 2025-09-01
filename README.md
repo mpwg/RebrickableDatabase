@@ -29,6 +29,13 @@ What the script does
 - Automatically creates indexes for columns that look like foreign keys (column names ending with `_id`).
 - Sets a few SQLite pragmas for reasonable import performance (foreign_keys OFF, synchronous=NORMAL, journal_mode=WAL).
 
+Foreign key support
+--------------------
+
+The importer now attempts to create FOREIGN KEY constraints when it can infer relationships between CSVs. It scans all CSV files first to collect column names and (optionally) detect primary keys (use `--detect-pk`). Columns that end with `_id` are treated as foreign-key candidates; the importer tries to match the base name to an existing table (for example `part_id` -> `part` or `parts`) and references the target table's detected PK (or `id` if present, otherwise the first column).
+
+For performance the script disables foreign-key enforcement while bulk inserting, then enables it and runs `PRAGMA foreign_key_check` at the end and prints any violations. The FK-detection uses simple heuristics and may not always pick the intended relationship — if you want exact control I can add a CLI flag or JSON mapping file to declare explicit foreign-key mappings.
+
 Command-line options
 ---------------------
 

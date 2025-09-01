@@ -14,7 +14,7 @@ import sqlite3
 import sys
 import re
 from glob import glob
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 
 def sanitize_name(name: str) -> str:
@@ -128,7 +128,8 @@ def detect_primary_key(csv_path: str, cols: List[str], size_limit_rows: int = 50
 
 
 def import_csv_to_table(conn: sqlite3.Connection, csv_path: str, table_name: str,
-                        *, detect_pk: bool = False, max_rows: Optional[int] = None, skip_large: Optional[int] = None):
+                        *, detect_pk: bool = False, max_rows: Optional[int] = None, skip_large: Optional[int] = None,
+                        pre_meta: Optional[Dict[str, Any]] = None, all_meta: Optional[Dict[str, Any]] = None):
     print(f"Importing '{csv_path}' -> table '{table_name}'")
 
     # Optionally skip very large files by simple line count
@@ -139,43 +140,79 @@ def import_csv_to_table(conn: sqlite3.Connection, csv_path: str, table_name: str
             print(f"  Skipping large file ({total} rows) > {skip_large}")
             return
 
-    # Read header and sanitize columns
-    with open(csv_path, newline='', encoding='utf-8') as fh:
-        delimiter = ','
-        reader = csv.reader(fh, delimiter=delimiter)
-        try:
-            header = next(reader)
-        except StopIteration:
-            print(f"  Skipping empty file: {csv_path}")
-            return
+    # If precomputed metadata is provided, use it (this allows resolving foreign keys across files)
+    if pre_meta is not None:
+        cols = pre_meta['cols']
+        cols_sanitized = pre_meta['cols_sanitized']
+        inferred = pre_meta['inferred']
+        pk_col = pre_meta.get('pk_col', '')
+        pk_detected = pre_meta.get('pk_detected', False)
+    else:
+        # Read header and sanitize columns
+        with open(csv_path, newline='', encoding='utf-8') as fh:
+            delimiter = ','
+            reader = csv.reader(fh, delimiter=delimiter)
+            try:
+                header = next(reader)
+            except StopIteration:
+                print(f"  Skipping empty file: {csv_path}")
+                return
 
-        cols = [c.strip() for c in header]
-        if any(c == '' for c in cols):
-            cols = [c if c != '' else f"col_{i+1}" for i, c in enumerate(cols)]
+            cols = [c.strip() for c in header]
+            if any(c == '' for c in cols):
+                cols = [c if c != '' else f"col_{i+1}" for i, c in enumerate(cols)]
 
-        cols_sanitized = [sanitize_name(c) for c in cols]
+            cols_sanitized = [sanitize_name(c) for c in cols]
 
-    # Infer column types
-    inferred = infer_column_types(csv_path, cols)
+        # Infer column types
+        inferred = infer_column_types(csv_path, cols)
 
-    # Detect primary key if requested
-    pk_col = ''
-    pk_detected = False
-    if detect_pk:
-        pk_col, pk_detected = detect_primary_key(csv_path, cols)
-        if pk_detected:
-            pk_col = sanitize_name(pk_col)
+        # Detect primary key if requested
+        pk_col = ''
+        pk_detected = False
+        if detect_pk:
+            pk_col, pk_detected = detect_primary_key(csv_path, cols)
+            if pk_detected:
+                pk_col = sanitize_name(pk_col)
 
-    # Build CREATE TABLE statement with inferred types and optional PK
+    # Build CREATE TABLE statement with inferred types and optional PK and foreign key constraints
     col_defs_parts = []
+    fk_parts = []
     for name, typ in zip(cols_sanitized, inferred):
         part = f'"{name}" {typ}'
         if pk_detected and name == pk_col:
             part += ' PRIMARY KEY'
         col_defs_parts.append(part)
 
-    create_sql = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({", ".join(col_defs_parts)});'
+        # Add a foreign key clause when column looks like a foreign key (ends with _id) and we have metadata
+        if name.lower().endswith('_id') and all_meta is not None:
+            base = name[:-3]
+            # Try candidate table names: base, base+'s', base+'es'
+            candidates = [base, base + 's', base + 'es']
+            ref_table = None
+            for c in candidates:
+                if c in all_meta:
+                    ref_table = c
+                    break
+            if ref_table is None:
+                # Try matching plural forms of existing tables to the base (e.g., base='set' -> 'sets')
+                for t in all_meta.keys():
+                    if t == base or t.endswith(base + 's') or t.endswith(base):
+                        ref_table = t
+                        break
+            if ref_table is not None:
+                # Choose referenced column: prefer detected PK, otherwise 'id' if present, else first column
+                ref_pk = all_meta[ref_table].get('pk_col', '')
+                if not ref_pk:
+                    if 'id' in all_meta[ref_table]['cols_sanitized']:
+                        ref_pk = 'id'
+                    else:
+                        ref_pk = all_meta[ref_table]['cols_sanitized'][0]
+                fk_parts.append(f'FOREIGN KEY ("{name}") REFERENCES "{ref_table}"("{ref_pk}")')
+
     cur = conn.cursor()
+    create_body = ", ".join(col_defs_parts + fk_parts)
+    create_sql = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({create_body});'
     cur.execute(create_sql)
 
     # Use idempotent inserts to avoid failing on duplicates when re-running imports.
@@ -284,15 +321,78 @@ def main(argv=None):
             print(f"No CSV files found in {csv_dir}")
             return
 
+        # First pass: gather metadata for all CSVs so we can resolve foreign keys across tables
+        all_meta: Dict[str, Any] = {}
+        file_map: Dict[str, str] = {}
         for csv_path in csv_files:
             filename = os.path.basename(csv_path)
             table = os.path.splitext(filename)[0]
             table = sanitize_name(table)
+            file_map[table] = csv_path
 
-            if args.drop:
-                conn.execute(f'DROP TABLE IF EXISTS "{table}";')
+            # Read header
+            with open(csv_path, newline='', encoding='utf-8') as fh:
+                delimiter = ','
+                reader = csv.reader(fh, delimiter=delimiter)
+                try:
+                    header = next(reader)
+                except StopIteration:
+                    header = []
+                cols = [c.strip() for c in header]
+                if any(c == '' for c in cols):
+                    cols = [c if c != '' else f"col_{i+1}" for i, c in enumerate(cols)]
+                cols_sanitized = [sanitize_name(c) for c in cols]
 
-            import_csv_to_table(conn, csv_path, table, detect_pk=args.detect_pk, max_rows=args.max_rows, skip_large=args.skip_large)
+            inferred = infer_column_types(csv_path, cols)
+            pk_col = ''
+            pk_detected = False
+            if args.detect_pk:
+                pk_col, pk_detected = detect_primary_key(csv_path, cols)
+                if pk_detected:
+                    pk_col = sanitize_name(pk_col)
+
+            all_meta[table] = {
+                'cols': cols,
+                'cols_sanitized': cols_sanitized,
+                'inferred': inferred,
+                'pk_col': pk_col,
+                'pk_detected': pk_detected,
+            }
+
+        # Optionally drop tables first
+        if args.drop:
+            for t in all_meta.keys():
+                conn.execute(f'DROP TABLE IF EXISTS "{t}";')
+
+        # Import files using metadata to generate FK constraints
+        for table, meta in all_meta.items():
+            csv_path = file_map[table]
+            import_csv_to_table(conn, csv_path, table, detect_pk=args.detect_pk,
+                                max_rows=args.max_rows, skip_large=args.skip_large,
+                                pre_meta=meta, all_meta=all_meta)
+
+        # After import, enable foreign key enforcement and check for violations
+        conn.execute('PRAGMA foreign_keys = ON;')
+        cur = conn.execute('PRAGMA foreign_key_check;')
+        violations = cur.fetchall()
+        if violations:
+            print('\nForeign key check found violations:')
+                # Get the column name for the foreign key
+                fk_info = conn.execute(f'PRAGMA foreign_key_list("{v[0]}");').fetchall()
+                fk_col = None
+                for fk in fk_info:
+                    # fk[0] is the id (matches v[3]), fk[3] is the column name
+                    if fk[0] == v[3]:
+                        fk_col = fk[3]
+                        break
+                fk_val = None
+                if fk_col:
+                    row = conn.execute(f'SELECT "{fk_col}" FROM "{v[0]}" WHERE rowid=?;', (v[1],)).fetchone()
+                    if row:
+                        fk_val = row[0]
+                print(f'  Table {v[0]} rowid={v[1]} references missing parent in {v[2]} (fk={v[3]}, value={fk_val})')
+        else:
+            print('\nForeign key check passed: no violations')
 
     finally:
         conn.close()
