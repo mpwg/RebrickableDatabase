@@ -377,20 +377,20 @@ def main(argv=None):
         violations = cur.fetchall()
         if violations:
             print('\nForeign key check found violations:')
-                # Get the column name for the foreign key
-                fk_info = conn.execute(f'PRAGMA foreign_key_list("{v[0]}");').fetchall()
-                fk_col = None
-                for fk in fk_info:
-                    # fk[0] is the id (matches v[3]), fk[3] is the column name
-                    if fk[0] == v[3]:
-                        fk_col = fk[3]
-                        break
-                fk_val = None
-                if fk_col:
-                    row = conn.execute(f'SELECT "{fk_col}" FROM "{v[0]}" WHERE rowid=?;', (v[1],)).fetchone()
-                    if row:
-                        fk_val = row[0]
-                print(f'  Table {v[0]} rowid={v[1]} references missing parent in {v[2]} (fk={v[3]}, value={fk_val})')
+            # Get the column name for the foreign key
+            fk_info = conn.execute(f'PRAGMA foreign_key_list("{v[0]}");').fetchall()
+            fk_col = None
+            for fk in fk_info:
+                # fk[0] is the id (matches v[3]), fk[3] is the column name
+                if fk[0] == v[3]:
+                    fk_col = fk[3]
+                    break
+            fk_val = None
+            if fk_col:
+                row = conn.execute(f'SELECT "{fk_col}" FROM "{v[0]}" WHERE rowid=?;', (v[1],)).fetchone()
+                if row:
+                    fk_val = row[0]
+            print(f'  Table {v[0]} rowid={v[1]} references missing parent in {v[2]} (fk={v[3]}, value={fk_val})')
         else:
             print('\nForeign key check passed: no violations')
 
